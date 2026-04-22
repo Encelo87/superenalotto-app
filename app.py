@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string
+from flask import Flask, render_template_string, request
 import random
 import requests
 from bs4 import BeautifulSoup
@@ -10,86 +10,128 @@ URL = "https://www.superenalotto.it/archivio-estrazioni"
 
 def prendi_dati():
     numeri = []
+    estrazioni_complete = []
+
     try:
         r = requests.get(URL)
         soup = BeautifulSoup(r.text, "html.parser")
 
         estrazioni = soup.find_all("div", class_="draw")
+
         for e in estrazioni:
-            nums = e.find_all("span", class_="number")
-            row = [int(n.text) for n in nums[:6]]
-            numeri.extend(row)
+            nums = [int(n.text) for n in e.find_all("span", class_="number")[:6]]
+            numeri.extend(nums)
+            estrazioni_complete.append(nums)
+
     except:
         pass
 
-    return numeri
+    return numeri, estrazioni_complete
+
 
 def statistiche():
-    dati = prendi_dati()
-    conteggio = Counter(dati)
-    piu_frequenti = conteggio.most_common(10)
-    return piu_frequenti
+    numeri, estrazioni = prendi_dati()
+    conteggio = Counter(numeri)
 
-def genera_numeri():
-    return sorted(random.sample(range(1, 91), 6))
+    frequenti = conteggio.most_common(10)
+
+    # ritardatari
+    ultimi = estrazioni[-20:] if len(estrazioni) > 20 else estrazioni
+    usciti_recenti = set(n for estr in ultimi for n in estr)
+
+    ritardatari = [n for n in range(1, 91) if n not in usciti_recenti][:10]
+
+    return frequenti, ritardatari, estrazioni[-5:]
+
+
+def genera_intelligente():
+    numeri = random.sample(range(1, 91), 6)
+
+    # bilanciamento pari/dispari
+    pari = [n for n in numeri if n % 2 == 0]
+    dispari = [n for n in numeri if n % 2 != 0]
+
+    while not (2 <= len(pari) <= 4):
+        numeri = random.sample(range(1, 91), 6)
+        pari = [n for n in numeri if n % 2 == 0]
+
+    return sorted(numeri)
+
 
 HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>SuperEnalotto App</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        body { font-family: Arial; text-align: center; background: #f4f4f4; }
-        h1 { color: #333; }
-        button { padding: 10px 20px; margin: 10px; }
-        canvas { max-width: 600px; margin: auto; }
-    </style>
+<title>SuperEnalotto PRO</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+body { font-family: Arial; background:#121212; color:white; text-align:center; }
+button { padding:10px; margin:10px; border:none; background:#00c853; color:white; cursor:pointer; }
+.card { background:#1e1e1e; padding:15px; margin:10px; border-radius:10px; }
+</style>
 </head>
+
 <body>
-    <h1>SuperEnalotto Dashboard</h1>
 
-    <form method="post">
-        <button name="azione" value="genera">Genera numeri</button>
-    </form>
+<h1>🎯 SuperEnalotto PRO</h1>
 
-    {% if numeri %}
-        <h2>{{ numeri }}</h2>
-    {% endif %}
+<form method="post">
+<button name="azione" value="genera">🎲 Genera numeri</button>
+</form>
 
-    <h2>Numeri più frequenti</h2>
-    <canvas id="chart"></canvas>
+{% if numeri %}
+<div class="card">
+<h2>{{ numeri }}</h2>
+</div>
+{% endif %}
 
-    <script>
-        const data = {{ stats|safe }};
-        const labels = data.map(x => x[0]);
-        const values = data.map(x => x[1]);
+<div class="card">
+<h3>📊 Numeri frequenti</h3>
+<canvas id="freq"></canvas>
+</div>
 
-        new Chart(document.getElementById("chart"), {
-            type: 'bar',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: 'Frequenza',
-                    data: values
-                }]
-            }
-        });
-    </script>
+<div class="card">
+<h3>⏳ Ritardatari</h3>
+<p>{{ ritardatari }}</p>
+</div>
+
+<div class="card">
+<h3>📅 Ultime estrazioni</h3>
+{% for e in estrazioni %}
+<p>{{ e }}</p>
+{% endfor %}
+</div>
+
+<script>
+const freq = {{ frequenti|safe }};
+new Chart(document.getElementById("freq"), {
+type: 'bar',
+data: {
+labels: freq.map(x=>x[0]),
+datasets:[{data: freq.map(x=>x[1])}]
+}
+});
+</script>
 
 </body>
 </html>
 """
 
-@app.route("/", methods=["GET", "POST"])
+@app.route("/", methods=["GET","POST"])
 def home():
     numeri = None
-    if True:
-        numeri = genera_numeri()
 
-    stats = statistiche()
+    if request.method == "POST":
+        numeri = genera_intelligente()
 
-    return render_template_string(HTML, numeri=numeri, stats=stats)
+    frequenti, ritardatari, estrazioni = statistiche()
+
+    return render_template_string(HTML,
+        numeri=numeri,
+        frequenti=frequenti,
+        ritardatari=ritardatari,
+        estrazioni=estrazioni
+    )
 
 if __name__ == "__main__":
     app.run()
